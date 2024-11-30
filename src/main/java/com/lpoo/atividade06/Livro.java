@@ -36,7 +36,7 @@ public class Livro {
     public String getAssunto() {
         return assunto;
     }
-    
+
     public void setCodigoISBN(String codigoISBN) {
         this.codigoISBN = codigoISBN;
     }
@@ -44,7 +44,7 @@ public class Livro {
     public String getCodigoISBN() {
         return codigoISBN;
     }
-    
+
     public void setDataPublicacao(Date dataPublicacao) {
         this.dataPublicacao = dataPublicacao;
     }
@@ -86,5 +86,10 @@ public class Livro {
 
     public void setId(int id) {
         this.id = id;
+    }
+
+    @Override
+    public String toString() {
+        return titulo;
     }
 }
