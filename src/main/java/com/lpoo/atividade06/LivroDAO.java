@@ -1,21 +1,17 @@
 package com.lpoo.atividade06;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
 
 public class LivroDAO {
 
-    private final String stmtInserir = "INSERT INTO livro(titulo) VALUES(?)";
+    private final String stmtInserir = "INSERT INTO livro (titulo, assunto, codigoISBN, dataPublicacao) VALUES (?, ?, ?, ?)";
     private final String stmtConsultar = "SELECT * FROM livro WHERE id = ?";
     private final String stmtListaLivroAutor = "SELECT * FROM livro";
 
     public void inserirLivro(Livro livro) {
         Connection con = null;
-
         PreparedStatement stmt = null;
 
         try {
@@ -24,44 +20,39 @@ public class LivroDAO {
 
             stmt = con.prepareStatement(stmtInserir, PreparedStatement.RETURN_GENERATED_KEYS);
             stmt.setString(1, livro.getTitulo());
+            stmt.setString(2, livro.getAssunto());
+            stmt.setString(3, livro.getCodigoISBN());
+            stmt.setDate(4, new java.sql.Date(livro.getDataPublicacao().getTime()));
+
             stmt.executeUpdate();
 
             int idLivroGravado = lerIdLivro(stmt);
-
             livro.setId(idLivroGravado);
 
-            this.gravarAutores(livro, con);
+            gravarAutores(livro, con);
 
             con.commit();
         } catch (SQLException ex) {
             try {
-                con.rollback();
-            } catch (SQLException ex1) {
-                System.out.println("Erro ao tentar rollback. Ex=" + ex1.getMessage());
-            };
-
+                if (con != null) {
+                    con.rollback();
+                }
+            } catch (SQLException rollbackEx) {
+                System.err.println("Erro ao tentar rollback. Ex=" + rollbackEx.getMessage());
+            }
             throw new RuntimeException("Erro ao inserir um livro no banco de dados. Origem=" + ex.getMessage());
         } finally {
-            try {
-                stmt.close();
-            } catch (Exception ex) {
-                System.out.println("Erro ao fechar stmt. Ex=" + ex.getMessage());
-            };
-
-            try {
-                con.close();;
-            } catch (Exception ex) {
-                System.out.println("Erro ao fechar conexão. Ex=" + ex.getMessage());
-            };
+            fecharRecursos(con, stmt, null);
         }
     }
 
     private int lerIdLivro(PreparedStatement stmt) throws SQLException {
-        ResultSet rs = stmt.getGeneratedKeys();
-
-        rs.next();
-
-        return rs.getInt(1);
+        try (ResultSet rs = stmt.getGeneratedKeys()) {
+            if (rs.next()) {
+                return rs.getInt(1);
+            }
+        }
+        throw new SQLException("Erro ao recuperar o ID do livro inserido.");
     }
 
     public Livro consultarLivro(int id) {
@@ -71,85 +62,66 @@ public class LivroDAO {
 
         try {
             con = ConnectionFactory.getConnection();
-
             stmt = con.prepareStatement(stmtConsultar);
 
-            Livro livroLido = null;
-
-            stmt.setLong(1, id);
+            stmt.setInt(1, id);
             rs = stmt.executeQuery();
-            rs.next();
 
-            List<Autor> listaAutores = lerAutores(id, con);
-
-            livroLido = new Livro(rs.getString("titulo"), listaAutores);
-            livroLido.setId(rs.getInt("Id"));
-
-            return livroLido;
+            if (rs.next()) {
+                List<Autor> listaAutores = lerAutores(id, con);
+                Livro livroLido = new Livro(
+                        rs.getString("titulo"),
+                        listaAutores,
+                        rs.getString("assunto"),
+                        rs.getString("codigoISBN"),
+                        rs.getDate("dataPublicacao")
+                );
+                livroLido.setId(rs.getInt("id"));
+                return livroLido;
+            }
+            return null;
         } catch (SQLException ex) {
             throw new RuntimeException("Erro ao consultar um livro no banco de dados. Origem=" + ex.getMessage());
         } finally {
-            try {
-                rs.close();
-            } catch (Exception ex) {
-                System.out.println("Erro ao fechar rs. Ex=" + ex.getMessage());
-            };
-
-            try {
-                stmt.close();
-            } catch (Exception ex) {
-                System.out.println("Erro ao fechar stmt. Ex=" + ex.getMessage());
-            };
-
-            try {
-                con.close();;
-            } catch (Exception ex) {
-                System.out.println("Erro ao fechar conexão. Ex=" + ex.getMessage());
-            };
+            fecharRecursos(con, stmt, rs);
         }
-
     }
 
     private void gravarAutores(Livro livro, Connection con) throws SQLException {
-        String sql = "INSERT INTO livro_autor (id_livro, id_autor) VALUES ( ?, ?)";
+        String sql = "INSERT INTO livro_autor (id_livro, id_autor) VALUES (?, ?)";
+        try (PreparedStatement stmt = con.prepareStatement(sql)) {
+            stmt.setInt(1, livro.getId());
 
-        PreparedStatement stmt;
-
-        stmt = con.prepareStatement(sql);
-        stmt.setInt(1, livro.getId());
-
-        List<Autor> autores = livro.getAutores();
-
-        for (Autor autor : autores) {
-            stmt.setLong(2, autor.getId());
-            stmt.executeUpdate();
+            for (Autor autor : livro.getAutores()) {
+                stmt.setInt(2, autor.getId());
+                stmt.executeUpdate();
+            }
         }
     }
 
-    private List<Autor> lerAutores(long idLivro, Connection con) throws SQLException {
-        //Select para pegar os autores de um livro
-        String sql = "SELECT autor.id, autor.nome"
-                + " FROM autor"
-                + " INNER JOIN livro_autor"
-                + " 	ON autor.id = livro_autor.id_autor"
-                + " WHERE livro_autor.id_livro = ? ";
+    private List<Autor> lerAutores(int idLivro, Connection con) throws SQLException {
+        String sql = "SELECT autor.id, autor.nome, autor.dataNascimento, autor.documento, autor.naturalidade "
+                + "FROM autor "
+                + "INNER JOIN livro_autor ON autor.id = livro_autor.id_autor "
+                + "WHERE livro_autor.id_livro = ?";
+        
+        List<Autor> autores = new ArrayList<>();
+        try (PreparedStatement stmt = con.prepareStatement(sql)) {
+            stmt.setInt(1, idLivro);
 
-        PreparedStatement stmt = null;
-        List<Autor> autores = null;
-
-        stmt = con.prepareStatement(sql);
-        stmt.setLong(1, idLivro);
-
-        ResultSet resultado = stmt.executeQuery();
-
-        autores = new ArrayList<Autor>();
-
-        while (resultado.next()) {
-            Autor autorLido = new Autor(resultado.getString("nome"));
-            autorLido.setId(resultado.getInt("id"));
-            autores.add(autorLido);
+            try (ResultSet resultado = stmt.executeQuery()) {
+                while (resultado.next()) {
+                    Autor autorLido = new Autor(
+                            resultado.getString("nome"),
+                            resultado.getDate("dataNascimento"),
+                            resultado.getString("documento"),
+                            resultado.getString("naturalidade")
+                    );
+                    autorLido.setId(resultado.getInt("id"));
+                    autores.add(autorLido);
+                }
+            }
         }
-
         return autores;
     }
 
@@ -160,45 +132,54 @@ public class LivroDAO {
 
         try {
             con = ConnectionFactory.getConnection();
-
             stmt = con.prepareStatement(stmtListaLivroAutor);
 
             rs = stmt.executeQuery();
 
-            List<Livro> listaLivros = new ArrayList<Livro>();
+            List<Livro> listaLivros = new ArrayList<>();
 
             while (rs.next()) {
-                List<Autor> listAutores = lerAutores(rs.getInt(1), con);
-                Livro livro = new Livro(rs.getString(2), listAutores);
-
-                livro.setId(rs.getInt(1));
-
+                List<Autor> listAutores = lerAutores(rs.getInt("id"), con);
+                Livro livro = new Livro(
+                        rs.getString("titulo"),
+                        listAutores,
+                        rs.getString("assunto"),
+                        rs.getString("codigoISBN"),
+                        rs.getDate("dataPublicacao")
+                );
+                livro.setId(rs.getInt("id"));
                 listaLivros.add(livro);
             }
 
             return listaLivros;
         } catch (SQLException ex) {
-            throw new RuntimeException("Erro ao listar um livro com autores no banco de dados. Origem=" + ex.getMessage());
+            throw new RuntimeException("Erro ao listar livros com autores no banco de dados. Origem=" + ex.getMessage());
         } finally {
-            try {
-                rs.close();
-            } catch (Exception ex) {
-                System.out.println("Erro ao fechar rs. Ex=" + ex.getMessage());
-            };
-
-            try {
-                stmt.close();
-            } catch (Exception ex) {
-                System.out.println("Erro ao fechar stmt. Ex=" + ex.getMessage());
-            };
-
-            try {
-                con.close();;
-            } catch (Exception ex) {
-                System.out.println("Erro ao fechar conexão. Ex=" + ex.getMessage());
-            };
+            fecharRecursos(con, stmt, rs);
         }
-
     }
 
+    private void fecharRecursos(Connection con, PreparedStatement stmt, ResultSet rs) {
+        try {
+            if (rs != null) {
+                rs.close();
+            }
+        } catch (SQLException ex) {
+            System.err.println("Erro ao fechar ResultSet. Ex=" + ex.getMessage());
+        }
+        try {
+            if (stmt != null) {
+                stmt.close();
+            }
+        } catch (SQLException ex) {
+            System.err.println("Erro ao fechar PreparedStatement. Ex=" + ex.getMessage());
+        }
+        try {
+            if (con != null) {
+                con.close();
+            }
+        } catch (SQLException ex) {
+            System.err.println("Erro ao fechar Connection. Ex=" + ex.getMessage());
+        }
+    }
 }
